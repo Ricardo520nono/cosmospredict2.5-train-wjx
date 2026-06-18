@@ -1,27 +1,103 @@
 # CosmosPredict2.5 AFB S1 训练包
 
-这是给 ActionFollowingBench S1 训练整理出来的一份干净交接目录，目标是让人或 Codex 读完后，可以直接在公共路径下一键预检和启动训练。
+这是给 ActionFollowingBench S1 训练整理出来的 CosmosPredict2.5 训练交接包。它的目标不是只保存几个启动脚本，而是让后续负责训练的 Codex 读完后，能理解训练 pipeline、知道哪些路径必须存在、知道如何预检、如何启动训练，以及下一阶段 head/left/right 多视角主线应该从哪里改。
 
-根目录：
+公共根目录：
 
 ```bash
 /mnt/public_ckp/cscsx_projects/cosmospredict2.5_train
 ```
 
+GitHub 仓库：
+
+```bash
+https://github.com/Ricardo520nono/cosmospredict2.5-train-wjx.git
+```
+
+## 重要结论
+
+当前这个包已经把训练必需的代码、脚本、文档和基础模型权重放到了 `/mnt/public_ckp/cscsx_projects/cosmospredict2.5_train`。
+
+如果翔哥能访问下面这些公共路径，就可以不依赖 `/mnt/gyc_ckp` 来训练：
+
+```bash
+/mnt/public_ckp/cscsx_projects/cosmospredict2.5_train
+/mnt/public_ckp/cscsx_projects/data/ActionFollowingBench
+```
+
+如果翔哥访问不到你的 `/mnt/gyc`，也可以训练，但需要他自己的 Python/CUDA 环境。启动脚本支持用 `COSMOS_VENV` 指向新的环境：
+
+```bash
+export COSMOS_VENV=/path/to/cosmos-python-env
+```
+
+只看 GitHub 仓库可以理解和接手代码，但 GitHub 不包含 4.5G 模型权重和训练数据。实际训练仍然需要公共目录里的 `models/` 和 AFB 数据集，或者把这些资源在新机器上按文档放到同样路径。
+
+## 当前可运行基线
+
+当前已经预检通过、可直接启动的基线是：
+
+```bash
+cd /mnt/public_ckp/cscsx_projects/cosmospredict2.5_train
+bash scripts/run_family_balanced_8gpu.sh
+```
+
+它是 AFB S1 family-balanced 单视角版本：
+
+- 任务：5 个 S1 任务。
+- 视角：当前代码固定读取 `head_camera` / `cam_high`。
+- 数据混合：expert : PCA enhanced : raw enhanced : random feasible = `3:1:1:1`。
+- Sampler：在线 family-balanced sampler。
+- Chunk size：16。
+- Action dim：14。
+- 默认 batch：8 卡训练时每卡 2。
+- 默认总步数：40000。
+- 默认保存间隔：4277 step，约等于一个整数 epoch。
+
+下一阶段主线是 head/left/right 多视角训练。当前包已经确认数据里存在多视角字段，但当前训练代码还没有切换成三视角版本。多视角改法见：
+
+```bash
+docs/MULTIVIEW_MAINLINE.md
+```
+
 ## 目录内容
 
-- `code/cosmos-predict2.5-CoRL`：可运行的 CosmosPredict2.5 代码，已包含 AFB S1 数据集和训练 config 修改。
-- `models/Cosmos-Predict2.5-2B`：本地 CosmosPredict2.5-2B action-conditioned 基础权重和 tokenizer。
-- `models/Cosmos-Reason1-7B`：本地 Reason1 文本编码器 checkpoint 目录。
-- `scripts`：干净的一键启动脚本。
-- `docs`：给人和 Codex 看的训练交接文档。
-- `outputs`：默认日志和 checkpoint 输出目录。
+```text
+cosmospredict2.5_train/
+  README.md
+  docs/
+    CODEX_HANDOFF.md
+    TRAINING_DETAILS.md
+    MULTIVIEW_MAINLINE.md
+  scripts/
+    preflight.sh
+    run_family_balanced_8gpu.sh
+    run_expert_single_task_8gpu.sh
+    run_expert_click_alarmclock_8gpu.sh
+    run_expert_click_bell_8gpu.sh
+    run_expert_place_object_basket_8gpu.sh
+    run_expert_open_laptop_8gpu.sh
+    run_expert_stack_blocks_two_8gpu.sh
+  code/
+    cosmos-predict2.5-CoRL/
+  models/
+    Cosmos-Predict2.5-2B/
+    Cosmos-Reason1-7B/
+  outputs/
+```
 
-当前训练视角固定为 `head_camera` / `cam_high`。除非明确要改数据集和 config，否则不要切到腕部或侧视角。
+说明：
+
+- `code/cosmos-predict2.5-CoRL`：可运行的 CosmosPredict2.5 代码，包含 AFB S1 数据集和训练 config 修改。
+- `models/Cosmos-Predict2.5-2B`：基础 action-conditioned 权重和 tokenizer。
+- `models/Cosmos-Reason1-7B`：Reason1 文本编码器 checkpoint 目录。
+- `scripts`：干净的一键启动脚本。
+- `docs`：给人和 Codex 看的交接文档。
+- `outputs`：默认日志和 checkpoint 输出目录。
 
 ## 快速开始
 
-先跑一次预检：
+先跑预检。这个预检会检查依赖、模型路径、Hydra config、数据读取和样本 shape。它会走 dryrun，不会进入真实训练。
 
 ```bash
 cd /mnt/public_ckp/cscsx_projects/cosmospredict2.5_train
@@ -42,7 +118,7 @@ cd /mnt/public_ckp/cscsx_projects/cosmospredict2.5_train
 AFB_S1_TASK=click_alarmclock bash scripts/run_expert_single_task_8gpu.sh
 ```
 
-也可以直接用 5 个任务的快捷脚本：
+也可以直接用 5 个任务快捷脚本：
 
 ```bash
 bash /mnt/public_ckp/cscsx_projects/cosmospredict2.5_train/scripts/run_expert_click_alarmclock_8gpu.sh
@@ -52,54 +128,44 @@ bash /mnt/public_ckp/cscsx_projects/cosmospredict2.5_train/scripts/run_expert_op
 bash /mnt/public_ckp/cscsx_projects/cosmospredict2.5_train/scripts/run_expert_stack_blocks_two_8gpu.sh
 ```
 
-## 训练方案
+## Python 环境
 
-### Family-Balanced S1
-
-这是目前的参考训练版本：
+脚本默认会优先找：
 
 ```bash
-bash /mnt/public_ckp/cscsx_projects/cosmospredict2.5_train/scripts/run_family_balanced_8gpu.sh
+${COSMOS_VENV}/bin/torchrun
 ```
 
-配置摘要：
+如果没有设置 `COSMOS_VENV`，默认值是历史已跑通环境：
 
-- 固定 5 个 S1 任务。
-- 数据混合比例：expert : PCA enhanced : raw enhanced : random feasible = `3:1:1:1`。
-- 使用在线 family-balanced sampler。
-- 视角：只用 head camera。
-- Chunk size：16。
-- Action dim：14。
-- 默认每卡 batch：2。
-- 默认总步数：40000。
-- 默认每 4277 step 保存一次 checkpoint，约等于一个整数 epoch。
+```bash
+/mnt/gyc/cosmos-predict2.5/.venv
+```
 
-### Expert-Only 单任务
+如果翔哥没有 `/mnt/gyc`，请在自己的环境里安装依赖，然后设置：
 
-每次只用一个任务的干净 expert 数据训练。
+```bash
+export COSMOS_VENV=/path/to/your/cosmos-predict2.5-venv
+```
 
-支持的 5 个任务：
+最低要求：
 
-- `click_alarmclock`
-- `click_bell`
-- `place_object_basket`
-- `open_laptop`
-- `stack_blocks_two`
+- Python 3.10。
+- CUDA/PyTorch 环境能运行 8 卡 `torchrun`。
+- `torch`、`flash_attn`、`h5py`、`av`、`decord`、`cv2`、`pandas`、`pyarrow` 可 import。
+- `packages/cosmos-cuda` 能通过 `PYTHONPATH` 被加载。
 
-默认 checkpoint 保存间隔如下：
+如果 `h5py` 不在主环境里，可以设置：
 
-| 任务 | 训练窗口数 | 保存间隔 step |
-| --- | ---: | ---: |
-| `click_alarmclock` | 2748 | 172 |
-| `click_bell` | 2514 | 158 |
-| `place_object_basket` | 9133 | 571 |
-| `open_laptop` | 7862 | 492 |
-| `stack_blocks_two` | 11957 | 748 |
+```bash
+export H5PY_EXTRA_PATH=/path/to/python3.10/site-packages
+```
 
 ## 常用环境变量
 
 ```bash
-export AFB_S1_PER_GPU_BATCH=1
+export COSMOS_VENV=/path/to/venv
+export AFB_S1_PER_GPU_BATCH=2
 export AFB_S1_MAX_ITER=40000
 export AFB_S1_NPROC=8
 export WANDB_MODE=online
@@ -112,23 +178,11 @@ export MASTER_PORT=29617
 /mnt/public_ckp/cscsx_projects/cosmospredict2.5_train/outputs/cosmos_train_output
 ```
 
-## Python 环境
+## 后续阅读顺序
 
-脚本默认复用当前机器上已经跑通的 Cosmos Python 环境：
+建议让 Codex 按这个顺序读文档：
 
-```bash
-/mnt/gyc/cosmos-predict2.5/.venv
-```
-
-同时会加入已验证可用的 `h5py` fallback 路径：
-
-```bash
-/mnt/gyc/envs/cosmos-policy/lib/python3.10/site-packages
-```
-
-如果换机器，需要在 Python 3.10 + CUDA 环境里安装 `code/cosmos-predict2.5-CoRL` 所需依赖，并确认 `torchrun`、`h5py`、`av`、`decord`、`cv2`、`pandas`、`pyarrow`、`flash_attn` 都能正常 import。
-
-修改训练逻辑前，建议先读：
-
-- `docs/CODEX_HANDOFF.md`
-- `docs/TRAINING_DETAILS.md`
+1. `README.md`
+2. `docs/CODEX_HANDOFF.md`
+3. `docs/TRAINING_DETAILS.md`
+4. `docs/MULTIVIEW_MAINLINE.md`

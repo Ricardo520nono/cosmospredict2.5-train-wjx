@@ -38,7 +38,8 @@ case "${TASK}" in
         ;;
 esac
 
-VENV_CUDNN="/mnt/gyc/cosmos-predict2.5/.venv/lib/python3.10/site-packages/nvidia/cudnn/lib"
+COSMOS_VENV="${COSMOS_VENV:-/mnt/gyc/cosmos-predict2.5/.venv}"
+VENV_CUDNN="${COSMOS_VENV}/lib/python3.10/site-packages/nvidia/cudnn/lib"
 export LD_LIBRARY_PATH="${VENV_CUDNN}:/usr/local/cuda-12.2/lib64:/usr/local/lib:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
 export PYTHONPATH=".:packages/cosmos-cuda"
 export H5PY_EXTRA_PATH="${H5PY_EXTRA_PATH:-/mnt/gyc/envs/cosmos-policy/lib/python3.10/site-packages}"
@@ -75,7 +76,7 @@ done
 
 TORCHRUN=""
 for candidate in \
-    "/mnt/gyc/cosmos-predict2.5/.venv/bin/torchrun" \
+    "${COSMOS_VENV}/bin/torchrun" \
     "$(which torchrun 2>/dev/null)"; do
     if [ -n "${candidate}" ] && [ -f "${candidate}" ]; then
         TORCHRUN="${candidate}"
@@ -125,7 +126,7 @@ except Exception as exc:
 print(f"[INFO] h5py import OK: {h5py.__file__}")
 PY
 then
-    UV_BIN="/mnt/gyc/cosmos-predict2.5/.venv/bin/uv"
+    UV_BIN="${COSMOS_VENV}/bin/uv"
     if [ ! -x "${UV_BIN}" ]; then
         UV_BIN="$(command -v uv || true)"
     fi
