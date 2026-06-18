@@ -1,55 +1,55 @@
-# Codex Handoff
+# Codex 交接说明
 
-Goal: maintain and launch CosmosPredict2.5 training for ActionFollowingBench S1 without repeatedly rediscovering path/config issues.
+目标：让后续负责训练的 Codex 能直接维护并启动 CosmosPredict2.5 在 ActionFollowingBench S1 上的训练，不需要反复重新排查路径、依赖和 config 问题。
 
-## Current Stable Baseline
+## 当前稳定基线
 
-The stable baseline is:
+稳定基线入口：
 
 ```bash
 bash /mnt/public_ckp/cscsx_projects/cosmospredict2.5_train/scripts/run_family_balanced_8gpu.sh
 ```
 
-This corresponds to the earlier working script:
+它对应之前已经跑通的训练脚本：
 
 ```bash
 bash /mnt/gyc/cosmos-predict2.5-CoRL/scripts/train_cosmos_8gpu_afb_s1_family_balanced_chunk16.sh
 ```
 
-The public package version has the same training behavior, but reads code/weights/outputs from:
+公共目录版本保持同样训练行为，但代码、权重和输出默认都指向：
 
 ```bash
 /mnt/public_ckp/cscsx_projects/cosmospredict2.5_train
 ```
 
-## Non-Negotiables
+## 不要随便改的约束
 
-- Camera: head camera only.
-- Family-balanced mix: `expert:pca:raw:random-feasible = 3:1:1:1`.
-- Chunk size: 16.
-- Action dim: 14.
-- Batch default: 2 per GPU on 8 GPUs.
-- WandB stays enabled by default.
-- Outputs default to this package under `outputs/cosmos_train_output`.
+- Camera：只用 head camera。
+- Family-balanced 混合比例：`expert:pca:raw:random-feasible = 3:1:1:1`。
+- Chunk size：16。
+- Action dim：14。
+- 默认 batch：8 卡训练时每卡 2。
+- WandB 默认开启。
+- 默认输出位置：`outputs/cosmos_train_output`。
 
-## Before Launching
+## 启动前必须先预检
 
-Run:
+运行：
 
 ```bash
 cd /mnt/public_ckp/cscsx_projects/cosmospredict2.5_train
 bash scripts/preflight.sh
 ```
 
-If preflight fails, fix that first. Most failures are path/import/config mismatches and should not require a cloud job submission.
+如果 preflight 失败，先修 preflight，不要直接提交云端训练任务。大多数失败都是路径、import、Hydra config 或数据读取问题，本地就能提前发现。
 
-## Editing Rules
+## 后续编辑规则
 
-- Edit files under `code/cosmos-predict2.5-CoRL`.
-- Keep top-level `scripts/` as thin, readable launchers.
-- Keep docs updated whenever changing tasks, paths, cameras, chunk size, action dim, checkpoint cadence, or model weights.
-- Do not add old experiment scratch scripts or dirty debugging notes to the top-level package.
+- 代码修改放在 `code/cosmos-predict2.5-CoRL` 下。
+- 顶层 `scripts/` 只保留薄而清晰的一键启动脚本。
+- 只要改任务、路径、视角、chunk size、action dim、checkpoint 间隔或模型权重，就同步更新文档。
+- 不要把旧实验草稿脚本、临时 debug 文档或无关 dirty 文件放进顶层交接包。
 
-## GitHub Note
+## GitHub 注意事项
 
-The local package includes model weights for direct training. Do not push `models/` or `outputs/` to GitHub as normal git files. For GitHub, push code, scripts, and docs; keep weights on `/mnt/public_ckp/...` or use Git LFS only if the repo owner explicitly wants that.
+本地公共目录包含可直接训练的模型权重，但不要把 `models/` 和 `outputs/` 当普通 git 文件推到 GitHub。GitHub 上只推代码、脚本和文档；模型权重保留在 `/mnt/public_ckp/...` 公共路径，除非仓库 owner 明确要求使用 Git LFS 管理权重。
