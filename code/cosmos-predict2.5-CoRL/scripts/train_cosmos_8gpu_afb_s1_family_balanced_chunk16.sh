@@ -5,15 +5,17 @@
 #   bash scripts/train_cosmos_8gpu_afb_s1_family_balanced_chunk16.sh
 
 set -euo pipefail
-COSMOS_TRAIN_ROOT="${COSMOS_TRAIN_ROOT:-/mnt/public_ckp/cscsx_projects/cosmospredict2.5_train}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_COSMOS_TRAIN_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+COSMOS_TRAIN_ROOT="${COSMOS_TRAIN_ROOT:-${DEFAULT_COSMOS_TRAIN_ROOT}}"
 REPO="${REPO:-${COSMOS_TRAIN_ROOT}/code/cosmos-predict2.5-CoRL}"
 cd "${REPO}"
 
-COSMOS_VENV="${COSMOS_VENV:-/mnt/gyc/cosmos-predict2.5/.venv}"
+COSMOS_VENV="${COSMOS_VENV:-${COSMOS_TRAIN_ROOT}/.venv}"
 VENV_CUDNN="${COSMOS_VENV}/lib/python3.10/site-packages/nvidia/cudnn/lib"
-export LD_LIBRARY_PATH="${VENV_CUDNN}:/usr/local/cuda-12.2/lib64:/usr/local/lib:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}"
+export LD_LIBRARY_PATH="${VENV_CUDNN}:/usr/local/cuda-12.2/lib64:/usr/local/lib:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
 export PYTHONPATH=".:packages/cosmos-cuda"
-export H5PY_EXTRA_PATH="${H5PY_EXTRA_PATH:-/mnt/gyc/envs/cosmos-policy/lib/python3.10/site-packages}"
+export H5PY_EXTRA_PATH="${H5PY_EXTRA_PATH:-}"
 export WANDB_MODE="${WANDB_MODE:-online}"
 export WANDB_DISABLED="${WANDB_DISABLED:-false}"
 export WANDB_ENTITY="${WANDB_ENTITY:-jw10014-new-york-university}"
@@ -23,40 +25,36 @@ export COSMOS_TRAIN_ROOT
 export IMAGINAIRE_OUTPUT_ROOT="${IMAGINAIRE_OUTPUT_ROOT:-${COSMOS_TRAIN_ROOT}/outputs/cosmos_train_output}"
 export AFB_S1_RF_VIDEO_CACHE_SIZE="${AFB_S1_RF_VIDEO_CACHE_SIZE:-0}"
 export COSMOS_SAVE_MODEL_ONLY="${COSMOS_SAVE_MODEL_ONLY:-1}"
+export AFB_DATA_ROOT="${AFB_DATA_ROOT:-/mnt/dataset/public_data/cscsx_projects/data/ActionFollowingBench}"
 
 export AFB_S1_PER_GPU_BATCH="${AFB_S1_PER_GPU_BATCH:-2}"
 export AFB_S1_MAX_ITER="${AFB_S1_MAX_ITER:-40000}"
 export AFB_S1_EPOCH_STEP="${AFB_S1_EPOCH_STEP:-4277}"
+export AFB_S1_EE_LOSS_WEIGHT="${AFB_S1_EE_LOSS_WEIGHT:-0.05}"
+export AFB_S1_EE_HEAD_HIDDEN_DIM="${AFB_S1_EE_HEAD_HIDDEN_DIM:-1024}"
 export AFB_S1_SKIP_PREFLIGHT="${AFB_S1_SKIP_PREFLIGHT:-0}"
 export AFB_S1_DRYRUN="${AFB_S1_DRYRUN:-0}"
 export AFB_S1_NPROC="${AFB_S1_NPROC:-8}"
 export COSMOS_EPOCH_CKPT_STEP="${AFB_S1_EPOCH_STEP}"
 export COSMOS_FINAL_CKPT_STEP="${AFB_S1_MAX_ITER}"
 
-EXPERT_ROOT="/mnt/public_ckp/cscsx_projects/data/ActionFollowingBench/data_delta_ee/demo_clean_zed2i_visible"
-ENHANCED_ROOT="/mnt/public_ckp/cscsx_projects/data/ActionFollowingBench/data_lerobot/robotwin_delta_ee/_enhanced_reconvert_wjx5_20260607"
-RF_ROOT="/mnt/public_ckp/cscsx_projects/data/ActionFollowingBench/EnhancedData/random_feasible_300step_5task_2ep5start_formal_v1/random_feasible_random_walk"
+EXPERT_ROOT="${AFB_EXPERT_ROOT:-${AFB_DATA_ROOT}/data_delta_ee/demo_clean_zed2i_visible}"
+ENHANCED_ROOT="${AFB_ENHANCED_LEROBOT_ROOT:-${AFB_DATA_ROOT}/data_lerobot/robotwin_delta_ee/_enhanced_reconvert_wjx5_20260607}"
+RF_ROOT="${AFB_RF_ROOT:-${AFB_DATA_ROOT}/EnhancedData/random_feasible_300step_5task_2ep5start_formal_v1/random_feasible_random_walk}"
 CKPT="${COSMOS_TRAIN_ROOT}/models/Cosmos-Predict2.5-2B/robot/action-cond/38c6c645-7d41-4560-8eeb-6f4ddc0e6574_ema_bf16.pt"
+TOKENIZER="${COSMOS_TRAIN_ROOT}/models/Cosmos-Predict2.5-2B/tokenizer.pth"
 REASON1="${COSMOS_TRAIN_ROOT}/models/Cosmos-Reason1-7B"
 
-for path in "${EXPERT_ROOT}" "${ENHANCED_ROOT}" "${RF_ROOT}" "${CKPT}" "${REASON1}"; do
+for path in "${EXPERT_ROOT}" "${ENHANCED_ROOT}" "${RF_ROOT}" "${CKPT}" "${TOKENIZER}" "${REASON1}"; do
     if [ ! -e "${path}" ]; then
         echo "[ERROR] Required path not found: ${path}"
         exit 1
     fi
 done
 
-TORCHRUN=""
-for candidate in \
-    "${COSMOS_VENV}/bin/torchrun" \
-    "$(which torchrun 2>/dev/null)"; do
-    if [ -n "${candidate}" ] && [ -f "${candidate}" ]; then
-        TORCHRUN="${candidate}"
-        break
-    fi
-done
-if [ -z "${TORCHRUN}" ]; then
-    echo "[ERROR] torchrun not found. Activate the cosmos venv first."
+TORCHRUN="${COSMOS_VENV}/bin/torchrun"
+if [ ! -x "${TORCHRUN}" ]; then
+    echo "[ERROR] torchrun not found at ${TORCHRUN}. Create ${COSMOS_VENV} with uv or set COSMOS_VENV explicitly."
     exit 1
 fi
 
@@ -75,6 +73,9 @@ echo "[INFO] Final checkpoint step: ${COSMOS_FINAL_CKPT_STEP}"
 echo "[INFO] H5PY extra path: ${H5PY_EXTRA_PATH}"
 echo "[INFO] RF video cache size: ${AFB_S1_RF_VIDEO_CACHE_SIZE}"
 echo "[INFO] Save model only: ${COSMOS_SAVE_MODEL_ONLY}"
+echo "[INFO] AFB data root: ${AFB_DATA_ROOT}"
+echo "[INFO] EE loss weight: ${AFB_S1_EE_LOSS_WEIGHT}"
+echo "[INFO] EE head hidden dim: ${AFB_S1_EE_HEAD_HIDDEN_DIM}"
 echo "[INFO] WandB mode: ${WANDB_MODE}"
 echo "[INFO] Skip preflight: ${AFB_S1_SKIP_PREFLIGHT}"
 echo "[INFO] Dryrun: ${AFB_S1_DRYRUN}"
@@ -151,6 +152,11 @@ assert cfg.checkpoint.save_iter == int(os.environ.get("AFB_S1_EPOCH_STEP", "4277
 assert cfg.model.config.state_t == 5
 assert cfg.model.config.net.action_dim == 14
 assert cfg.model.config.net.num_action_per_chunk == 16
+assert cfg.model.config.ee_head.enabled is True
+assert cfg.model.config.ee_head.loss_weight == float(os.environ.get("AFB_S1_EE_LOSS_WEIGHT", "0.05"))
+assert cfg.model.config.net.ee_head_enabled is True
+assert cfg.model.config.net.ee_head_num_frames == 16
+assert cfg.model.config.net.ee_head_latent_frames == 5
 assert cfg.model.config.net.use_crossattn_projection is True
 assert cfg.model.config.net.crossattn_proj_in_channels == 100352
 assert cfg.model.config.net.crossattn_emb_channels == 1024
@@ -175,16 +181,29 @@ for family in ("expert", "pca_c8_sigma0p05", "raw_sigma0p0025", "random_feasible
     sample = dict(by_task[task][0])
     sample["start"] = 0
     sample["chosen_family"] = family
-    frames, actions = ds._read_sample(sample)
+    frames, actions, ee_target = ds._read_sample(sample)
     if tuple(frames.shape) != (17, 480, 640, 3):
         raise RuntimeError(f"Unexpected raw frame shape for {family}: {frames.shape}")
     if tuple(actions.shape) != (16, 14):
         raise RuntimeError(f"Unexpected raw action shape for {family}: {actions.shape}")
+    ee_position, ee_rotation_6d, ee_gripper = ee_target
+    if tuple(ee_position.shape) != (16, 2, 3):
+        raise RuntimeError(f"Unexpected EE position shape for {family}: {ee_position.shape}")
+    if tuple(ee_rotation_6d.shape) != (16, 2, 6):
+        raise RuntimeError(f"Unexpected EE rotation 6D shape for {family}: {ee_rotation_6d.shape}")
+    if tuple(ee_gripper.shape) != (16, 2):
+        raise RuntimeError(f"Unexpected EE gripper shape for {family}: {ee_gripper.shape}")
 item = ds[0]
 if tuple(item["video"].shape) != (3, 17, 256, 320):
     raise RuntimeError(f"Unexpected video shape: {tuple(item['video'].shape)}")
 if tuple(item["action"].shape) != (16, 14):
     raise RuntimeError(f"Unexpected action shape: {tuple(item['action'].shape)}")
+if tuple(item["ee_target_position"].shape) != (16, 2, 3):
+    raise RuntimeError(f"Unexpected EE target position shape: {tuple(item['ee_target_position'].shape)}")
+if tuple(item["ee_target_rotation_6d"].shape) != (16, 2, 6):
+    raise RuntimeError(f"Unexpected EE target rotation shape: {tuple(item['ee_target_rotation_6d'].shape)}")
+if tuple(item["ee_target_gripper"].shape) != (16, 2):
+    raise RuntimeError(f"Unexpected EE target gripper shape: {tuple(item['ee_target_gripper'].shape)}")
 print(f"[INFO] Preflight dataset OK: {totals}")
 PY
 fi

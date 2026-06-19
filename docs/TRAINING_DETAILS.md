@@ -41,9 +41,11 @@
   -> 每个 rank 构造 DataLoader + DistributedSampler
   -> Dataset 在线采样 family/task/window
   -> 读取视频帧和 delta-ee action chunk
+  -> 读取未来 16 帧 EE target：position / rotation 6D / gripper
   -> Resize/ToTensor，得到模型输入 video tensor
   -> Reason1 在线编码任务文本
   -> CosmosPredict2.5 action-conditioned 模型训练
+  -> family-balanced 入口额外计算 EE trajectory auxiliary loss
   -> 按 save_iter 保存 checkpoint
   -> 到 max_iter 保存 final checkpoint
 ```
@@ -166,6 +168,9 @@ Preprocess 后 shape：
 ```text
 video:  (3, 17, 256, 320)
 action: (16, 14)
+ee_target_position:    (16, 2, 3)
+ee_target_rotation_6d: (16, 2, 6)
+ee_target_gripper:     (16, 2)
 ```
 
 其中 action dim = 14，表示双臂 delta-ee：
@@ -192,6 +197,24 @@ embedding_concat_strategy = full_concat
 ```
 
 这些配置和官方 action-conditioned 模型、Reason1 文本编码、chunk16 输入长度是配套的。之前训练反复报错时，核心问题之一就是 chunk/action/model 配置不一致。
+
+Family-balanced 入口额外启用：
+
+```text
+model.config.ee_head.enabled = True
+model.config.ee_head.loss_weight = AFB_S1_EE_LOSS_WEIGHT, 默认 0.05
+model.config.net.ee_head_enabled = True
+model.config.net.ee_head_num_frames = 16
+model.config.net.ee_head_latent_frames = 5
+model.config.net.ee_head_hidden_dim = AFB_S1_EE_HEAD_HIDDEN_DIM, 默认 1024
+```
+
+Expert-only 单任务入口显式保持 no-head：
+
+```text
+model.config.ee_head.enabled = False
+model.config.net.ee_head_enabled = False
+```
 
 ## 模型权重
 
@@ -230,15 +253,15 @@ AFB_S1_MAX_ITER=40000
 AFB_S1_EPOCH_STEP=4277
 ```
 
-Expert-only 默认保存间隔：
+Expert-only 默认保存间隔。训练窗口数按同时能读到 16 个 action、未来 16 帧 EE target 和 17 帧视频的有效窗口计算：
 
 | 任务 | 训练窗口数 | 保存间隔 step |
 | --- | ---: | ---: |
-| `click_alarmclock` | 2748 | 172 |
-| `click_bell` | 2514 | 158 |
-| `place_object_basket` | 9133 | 571 |
-| `open_laptop` | 7862 | 492 |
-| `stack_blocks_two` | 11957 | 748 |
+| `click_alarmclock` | 2708 | 170 |
+| `click_bell` | 2474 | 155 |
+| `place_object_basket` | 9093 | 569 |
+| `open_laptop` | 7822 | 489 |
+| `stack_blocks_two` | 11917 | 745 |
 
 默认输出目录：
 
@@ -258,11 +281,12 @@ bash scripts/preflight.sh
 预检会覆盖：
 
 - `h5py`、`torch`、`av`、`decord`、`cv2`、`pandas`、`pyarrow` import。
+- `scripts/smoke_ee_head_loss.py` 检查 EE head prediction shape、三项 loss 和 no-head 开关。
 - Hydra experiment 能否正确 compose。
 - Dataset 能否实例化。
 - Family-balanced 四类数据是否都有样本。
 - 5 个 expert-only 单任务窗口数量是否符合预期。
-- 单条样本 `video/action` shape 是否正确。
+- 单条样本 `video/action/ee_target_*` shape 是否正确。
 - `torchrun --dryrun` 能否启动到训练框架。
 
 ## 常见风险

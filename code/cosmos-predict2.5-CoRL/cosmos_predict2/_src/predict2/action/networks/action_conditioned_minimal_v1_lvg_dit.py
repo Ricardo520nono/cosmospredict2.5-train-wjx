@@ -43,11 +43,53 @@ class Mlp(nn.Module):
         x = self.drop(x)
         return x
 
+    def init_weights(self):
+        self.fc1.reset_parameters()
+        self.fc2.reset_parameters()
+
+
+class EETrajectoryHead(nn.Module):
+    def __init__(self, in_features, latent_frames, num_future_frames, hidden_features, drop=0.0):
+        super().__init__()
+        self.latent_frames = int(latent_frames)
+        self.num_future_frames = int(num_future_frames)
+        self.proj = nn.Sequential(
+            nn.Linear(in_features * self.latent_frames, hidden_features),
+            nn.GELU(approximate="tanh"),
+            nn.Dropout(drop),
+            nn.Linear(hidden_features, self.num_future_frames * 2 * 10),
+        )
+
+    def init_weights(self):
+        for module in self.proj:
+            if isinstance(module, nn.Linear):
+                nn.init.xavier_uniform_(module.weight)
+                nn.init.zeros_(module.bias)
+
+    def forward(self, x_B_T_H_W_D):
+        x_B_T_D = x_B_T_H_W_D.mean(dim=(2, 3))
+        assert x_B_T_D.shape[1] == self.latent_frames, (
+            f"EE head expected {self.latent_frames} latent frames, got {x_B_T_D.shape[1]}"
+        )
+        pred_B_T_A_D = self.proj(rearrange(x_B_T_D, "b t d -> b (t d)"))
+        pred_B_T_A_D = rearrange(pred_B_T_A_D, "b (t a d) -> b t a d", t=self.num_future_frames, a=2, d=10)
+        return {
+            "position": pred_B_T_A_D[..., 0:3],
+            "rotation_6d": pred_B_T_A_D[..., 3:9],
+            "gripper_logits": pred_B_T_A_D[..., 9],
+        }
+
 
 class ActionConditionedMinimalV1LVGDiT(MiniTrainDIT):
     def __init__(self, *args, timestep_scale: float = 1.0, **kwargs):
         assert "in_channels" in kwargs, "in_channels must be provided"
         kwargs["in_channels"] += 1  # Add 1 for the condition mask
+
+        self.ee_head_enabled = bool(kwargs.pop("ee_head_enabled", False))
+        self.ee_head_hidden_dim = int(kwargs.pop("ee_head_hidden_dim", 1024))
+        self.ee_head_dropout = float(kwargs.pop("ee_head_dropout", 0.0))
+        self.ee_head_num_frames = kwargs.pop("ee_head_num_frames", None)
+        self.ee_head_latent_frames = kwargs.pop("ee_head_latent_frames", None)
 
         action_dim = kwargs.get("action_dim", 10 * 8)
         if "action_dim" in kwargs:
@@ -63,6 +105,18 @@ class ActionConditionedMinimalV1LVGDiT(MiniTrainDIT):
         log.info(f"timestep_scale: {timestep_scale}")
 
         super().__init__(*args, **kwargs)
+
+        self.ee_head = None
+        if self.ee_head_enabled:
+            assert self.ee_head_num_frames is not None, "ee_head_num_frames must be provided when EE head is enabled"
+            assert self.ee_head_latent_frames is not None, "ee_head_latent_frames must be provided when EE head is enabled"
+            self.ee_head = EETrajectoryHead(
+                in_features=self.model_channels,
+                latent_frames=self.ee_head_latent_frames,
+                num_future_frames=self.ee_head_num_frames,
+                hidden_features=self.ee_head_hidden_dim,
+                drop=self.ee_head_dropout,
+            )
 
         # add action embedding
         self.action_embedder_B_D = Mlp(
@@ -80,6 +134,14 @@ class ActionConditionedMinimalV1LVGDiT(MiniTrainDIT):
             drop=0,
         )
 
+    def init_weights(self):
+        super().init_weights()
+        if hasattr(self, "action_embedder_B_D"):
+            self.action_embedder_B_D.init_weights()
+            self.action_embedder_B_3D.init_weights()
+        if hasattr(self, "ee_head") and self.ee_head is not None:
+            self.ee_head.init_weights()
+
     def forward(
         self,
         x_B_C_T_H_W: torch.Tensor,
@@ -92,6 +154,7 @@ class ActionConditionedMinimalV1LVGDiT(MiniTrainDIT):
         img_context_emb: Optional[torch.Tensor] = None,
         action: Optional[torch.Tensor] = None,
         intermediate_feature_ids: Optional[List[int]] = None,
+        return_ee_pred: bool = False,
         **kwargs,
     ) -> torch.Tensor | List[torch.Tensor] | Tuple[torch.Tensor, List[torch.Tensor]]:
         del kwargs
@@ -174,6 +237,10 @@ class ActionConditionedMinimalV1LVGDiT(MiniTrainDIT):
 
         x_B_T_H_W_O = self.final_layer(x_B_T_H_W_D, t_embedding_B_T_D, adaln_lora_B_T_3D=adaln_lora_B_T_3D)
         x_B_C_Tt_Hp_Wp = self.unpatchify(x_B_T_H_W_O)
+        ee_pred = None
+        if return_ee_pred:
+            assert self.ee_head is not None, "return_ee_pred=True requires ee_head_enabled=True"
+            ee_pred = self.ee_head(x_B_T_H_W_D)
         if intermediate_feature_ids:
             if len(intermediate_features_outputs) != len(intermediate_feature_ids):
                 log.warning(
@@ -181,7 +248,12 @@ class ActionConditionedMinimalV1LVGDiT(MiniTrainDIT):
                     f"but expected {len(intermediate_feature_ids)}. "
                     f"Requested IDs: {intermediate_feature_ids}"
                 )
+            if return_ee_pred:
+                return x_B_C_Tt_Hp_Wp, intermediate_features_outputs, ee_pred
             return x_B_C_Tt_Hp_Wp, intermediate_features_outputs
+
+        if return_ee_pred:
+            return x_B_C_Tt_Hp_Wp, ee_pred
 
         return x_B_C_Tt_Hp_Wp
 
@@ -190,6 +262,12 @@ class ActionChunkConditionedMinimalV1LVGDiT(MiniTrainDIT):
     def __init__(self, *args, timestep_scale: float = 1.0, **kwargs):
         assert "in_channels" in kwargs, "in_channels must be provided"
         kwargs["in_channels"] += 1  # Add 1 for the condition mask
+
+        self.ee_head_enabled = bool(kwargs.pop("ee_head_enabled", False))
+        self.ee_head_hidden_dim = int(kwargs.pop("ee_head_hidden_dim", 1024))
+        self.ee_head_dropout = float(kwargs.pop("ee_head_dropout", 0.0))
+        self.ee_head_num_frames = kwargs.pop("ee_head_num_frames", None)
+        self.ee_head_latent_frames = kwargs.pop("ee_head_latent_frames", None)
 
         action_dim = kwargs.get("action_dim", 10 * 8)
         if "action_dim" in kwargs:
@@ -210,6 +288,18 @@ class ActionChunkConditionedMinimalV1LVGDiT(MiniTrainDIT):
         self.timestep_scale = timestep_scale
 
         super().__init__(*args, **kwargs)
+
+        self.ee_head = None
+        if self.ee_head_enabled:
+            assert self.ee_head_num_frames is not None, "ee_head_num_frames must be provided when EE head is enabled"
+            assert self.ee_head_latent_frames is not None, "ee_head_latent_frames must be provided when EE head is enabled"
+            self.ee_head = EETrajectoryHead(
+                in_features=self.model_channels,
+                latent_frames=self.ee_head_latent_frames,
+                num_future_frames=self.ee_head_num_frames,
+                hidden_features=self.ee_head_hidden_dim,
+                drop=self.ee_head_dropout,
+            )
 
         if self._hidden_dim_in_action_embedder is None:
             self._hidden_dim_in_action_embedder = self.model_channels * 4
@@ -232,6 +322,14 @@ class ActionChunkConditionedMinimalV1LVGDiT(MiniTrainDIT):
             drop=0,
         )
 
+    def init_weights(self):
+        super().init_weights()
+        if hasattr(self, "action_embedder_B_D"):
+            self.action_embedder_B_D.init_weights()
+            self.action_embedder_B_3D.init_weights()
+        if hasattr(self, "ee_head") and self.ee_head is not None:
+            self.ee_head.init_weights()
+
     def forward(
         self,
         x_B_C_T_H_W: torch.Tensor,
@@ -244,6 +342,7 @@ class ActionChunkConditionedMinimalV1LVGDiT(MiniTrainDIT):
         img_context_emb: Optional[torch.Tensor] = None,
         action: Optional[torch.Tensor] = None,
         intermediate_feature_ids: Optional[List[int]] = None,
+        return_ee_pred: bool = False,
         **kwargs,
     ) -> torch.Tensor | List[torch.Tensor] | Tuple[torch.Tensor, List[torch.Tensor]]:
         del kwargs
@@ -340,6 +439,10 @@ class ActionChunkConditionedMinimalV1LVGDiT(MiniTrainDIT):
 
         x_B_T_H_W_O = self.final_layer(x_B_T_H_W_D, t_embedding_B_T_D, adaln_lora_B_T_3D=adaln_lora_B_T_3D)
         x_B_C_Tt_Hp_Wp = self.unpatchify(x_B_T_H_W_O)
+        ee_pred = None
+        if return_ee_pred:
+            assert self.ee_head is not None, "return_ee_pred=True requires ee_head_enabled=True"
+            ee_pred = self.ee_head(x_B_T_H_W_D)
         if intermediate_feature_ids:
             if len(intermediate_features_outputs) != len(intermediate_feature_ids):
                 log.warning(
@@ -347,6 +450,11 @@ class ActionChunkConditionedMinimalV1LVGDiT(MiniTrainDIT):
                     f"but expected {len(intermediate_feature_ids)}. "
                     f"Requested IDs: {intermediate_feature_ids}"
                 )
+            if return_ee_pred:
+                return x_B_C_Tt_Hp_Wp, intermediate_features_outputs, ee_pred
             return x_B_C_Tt_Hp_Wp, intermediate_features_outputs
+
+        if return_ee_pred:
+            return x_B_C_Tt_Hp_Wp, ee_pred
 
         return x_B_C_Tt_Hp_Wp

@@ -24,22 +24,25 @@ _TASK = os.environ.get("AFB_S1_TASK", "click_alarmclock")
 if _TASK not in _TASKS:
     raise ValueError(f"Unsupported AFB_S1_TASK={_TASK!r}. Expected one of {_TASKS}")
 
-_EXPERT_ROOT = "/mnt/public_ckp/cscsx_projects/data/ActionFollowingBench/data_delta_ee/demo_clean_zed2i_visible"
+_DATA_ROOT = os.environ.get(
+    "AFB_DATA_ROOT", "/mnt/dataset/public_data/cscsx_projects/data/ActionFollowingBench"
+)
+_EXPERT_ROOT = os.environ.get("AFB_EXPERT_ROOT", os.path.join(_DATA_ROOT, "data_delta_ee/demo_clean_zed2i_visible"))
 _CHUNK = 16
 _PER_GPU_BATCH = int(os.environ.get("AFB_S1_PER_GPU_BATCH", "2"))
 _EPOCH_SIZE_BY_TASK = {
-    "click_alarmclock": 2748,
-    "click_bell": 2514,
-    "place_object_basket": 9133,
-    "open_laptop": 7862,
-    "stack_blocks_two": 11957,
+    "click_alarmclock": 2708,
+    "click_bell": 2474,
+    "place_object_basket": 9093,
+    "open_laptop": 7822,
+    "stack_blocks_two": 11917,
 }
 _EPOCH_STEP_BY_TASK = {
-    "click_alarmclock": 172,
-    "click_bell": 158,
-    "place_object_basket": 571,
-    "open_laptop": 492,
-    "stack_blocks_two": 748,
+    "click_alarmclock": 170,
+    "click_bell": 155,
+    "place_object_basket": 569,
+    "open_laptop": 489,
+    "stack_blocks_two": 745,
 }
 _TRAIN_EPOCH_SIZE = int(os.environ.get("AFB_S1_EPOCH_SIZE", str(_EPOCH_SIZE_BY_TASK[_TASK])))
 _EPOCH_STEP = int(os.environ.get("AFB_S1_EPOCH_STEP", str(_EPOCH_STEP_BY_TASK[_TASK])))
@@ -82,7 +85,7 @@ afb_s1_expert_single_task_val_dataloader = L(DataLoader)(
     drop_last=True,
 )
 
-_TRAIN_ROOT = os.environ.get("COSMOS_TRAIN_ROOT", "/mnt/public_ckp/cscsx_projects/cosmospredict2.5_train")
+_TRAIN_ROOT = os.environ["COSMOS_TRAIN_ROOT"]
 _MODEL_ROOT = os.path.join(_TRAIN_ROOT, "models")
 _PREDICT2_MODEL_ROOT = os.path.join(_MODEL_ROOT, "Cosmos-Predict2.5-2B")
 _LOCAL_CKPT = os.path.join(
@@ -136,10 +139,12 @@ COSMOS_PREDICT2P5_2B_AFB_S1_EXPERT_SINGLE_TASK_CHUNK16 = LazyDict(
         model=dict(
             config=dict(
                 state_t=1 + _CHUNK // 4,
+                ee_head=dict(enabled=False),
                 net=dict(
                     action_dim=14,
                     num_action_per_chunk=_CHUNK,
                     temporal_compression_ratio=4,
+                    ee_head_enabled=False,
                     use_crossattn_projection=True,
                     crossattn_proj_in_channels=100352,
                     crossattn_emb_channels=1024,

@@ -47,6 +47,7 @@ bash scripts/run_family_balanced_8gpu.sh
 - 任务：5 个 S1 任务。
 - 视角：当前代码固定读取 `head_camera` / `cam_high`。
 - 数据混合：expert : PCA enhanced : raw enhanced : random feasible = `3:1:1:1`。
+- 辅助监督：family-balanced 入口默认启用 EE trajectory head，loss 为 `position MSE + rotation 6D MSE + gripper BCE`。
 - Sampler：在线 family-balanced sampler。
 - Chunk size：16。
 - Action dim：14。
@@ -136,13 +137,13 @@ bash /mnt/public_ckp/cscsx_projects/cosmospredict2.5_train/scripts/run_expert_st
 ${COSMOS_VENV}/bin/torchrun
 ```
 
-如果没有设置 `COSMOS_VENV`，默认值是历史已跑通环境：
+如果没有设置 `COSMOS_VENV`，默认值是当前训练包下的环境：
 
 ```bash
-/mnt/gyc/cosmos-predict2.5/.venv
+${COSMOS_TRAIN_ROOT}/.venv
 ```
 
-如果翔哥没有 `/mnt/gyc`，请在自己的环境里安装依赖，然后设置：
+如果需要使用其它环境，请显式设置：
 
 ```bash
 export COSMOS_VENV=/path/to/your/cosmos-predict2.5-venv
@@ -165,6 +166,9 @@ export H5PY_EXTRA_PATH=/path/to/python3.10/site-packages
 
 ```bash
 export COSMOS_VENV=/path/to/venv
+export AFB_DATA_ROOT=/mnt/dataset/public_data/cscsx_projects/data/ActionFollowingBench
+export AFB_S1_EE_LOSS_WEIGHT=0.05
+export AFB_S1_EE_HEAD_HIDDEN_DIM=1024
 export AFB_S1_PER_GPU_BATCH=2
 export AFB_S1_MAX_ITER=40000
 export AFB_S1_NPROC=8

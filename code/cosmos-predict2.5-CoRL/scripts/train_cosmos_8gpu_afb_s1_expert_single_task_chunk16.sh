@@ -6,31 +6,33 @@
 
 set -euo pipefail
 
-COSMOS_TRAIN_ROOT="${COSMOS_TRAIN_ROOT:-/mnt/public_ckp/cscsx_projects/cosmospredict2.5_train}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_COSMOS_TRAIN_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
+COSMOS_TRAIN_ROOT="${COSMOS_TRAIN_ROOT:-${DEFAULT_COSMOS_TRAIN_ROOT}}"
 REPO="${REPO:-${COSMOS_TRAIN_ROOT}/code/cosmos-predict2.5-CoRL}"
 cd "${REPO}"
 
 TASK="${AFB_S1_TASK:-}"
 case "${TASK}" in
     click_alarmclock)
-        DEFAULT_EPOCH_SIZE=2748
-        DEFAULT_EPOCH_STEP=172
+        DEFAULT_EPOCH_SIZE=2708
+        DEFAULT_EPOCH_STEP=170
         ;;
     click_bell)
-        DEFAULT_EPOCH_SIZE=2514
-        DEFAULT_EPOCH_STEP=158
+        DEFAULT_EPOCH_SIZE=2474
+        DEFAULT_EPOCH_STEP=155
         ;;
     place_object_basket)
-        DEFAULT_EPOCH_SIZE=9133
-        DEFAULT_EPOCH_STEP=571
+        DEFAULT_EPOCH_SIZE=9093
+        DEFAULT_EPOCH_STEP=569
         ;;
     open_laptop)
-        DEFAULT_EPOCH_SIZE=7862
-        DEFAULT_EPOCH_STEP=492
+        DEFAULT_EPOCH_SIZE=7822
+        DEFAULT_EPOCH_STEP=489
         ;;
     stack_blocks_two)
-        DEFAULT_EPOCH_SIZE=11957
-        DEFAULT_EPOCH_STEP=748
+        DEFAULT_EPOCH_SIZE=11917
+        DEFAULT_EPOCH_STEP=745
         ;;
     *)
         echo "[ERROR] Set AFB_S1_TASK to one of: click_alarmclock click_bell place_object_basket open_laptop stack_blocks_two"
@@ -38,11 +40,11 @@ case "${TASK}" in
         ;;
 esac
 
-COSMOS_VENV="${COSMOS_VENV:-/mnt/gyc/cosmos-predict2.5/.venv}"
+COSMOS_VENV="${COSMOS_VENV:-${COSMOS_TRAIN_ROOT}/.venv}"
 VENV_CUDNN="${COSMOS_VENV}/lib/python3.10/site-packages/nvidia/cudnn/lib"
 export LD_LIBRARY_PATH="${VENV_CUDNN}:/usr/local/cuda-12.2/lib64:/usr/local/lib:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
 export PYTHONPATH=".:packages/cosmos-cuda"
-export H5PY_EXTRA_PATH="${H5PY_EXTRA_PATH:-/mnt/gyc/envs/cosmos-policy/lib/python3.10/site-packages}"
+export H5PY_EXTRA_PATH="${H5PY_EXTRA_PATH:-}"
 export WANDB_MODE="${WANDB_MODE:-online}"
 export WANDB_DISABLED="${WANDB_DISABLED:-false}"
 export WANDB_ENTITY="${WANDB_ENTITY:-jw10014-new-york-university}"
@@ -51,6 +53,7 @@ export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
 export COSMOS_TRAIN_ROOT
 export IMAGINAIRE_OUTPUT_ROOT="${IMAGINAIRE_OUTPUT_ROOT:-${COSMOS_TRAIN_ROOT}/outputs/cosmos_train_output}"
 export COSMOS_SAVE_MODEL_ONLY="${COSMOS_SAVE_MODEL_ONLY:-1}"
+export AFB_DATA_ROOT="${AFB_DATA_ROOT:-/mnt/dataset/public_data/cscsx_projects/data/ActionFollowingBench}"
 
 export AFB_S1_PER_GPU_BATCH="${AFB_S1_PER_GPU_BATCH:-2}"
 export AFB_S1_MAX_ITER="${AFB_S1_MAX_ITER:-40000}"
@@ -62,7 +65,7 @@ export AFB_S1_NPROC="${AFB_S1_NPROC:-8}"
 export COSMOS_EPOCH_CKPT_STEP="${AFB_S1_EPOCH_STEP}"
 export COSMOS_FINAL_CKPT_STEP="${AFB_S1_MAX_ITER}"
 
-EXPERT_ROOT="/mnt/public_ckp/cscsx_projects/data/ActionFollowingBench/data_delta_ee/demo_clean_zed2i_visible"
+EXPERT_ROOT="${AFB_EXPERT_ROOT:-${AFB_DATA_ROOT}/data_delta_ee/demo_clean_zed2i_visible}"
 CKPT="${COSMOS_TRAIN_ROOT}/models/Cosmos-Predict2.5-2B/robot/action-cond/38c6c645-7d41-4560-8eeb-6f4ddc0e6574_ema_bf16.pt"
 TOKENIZER="${COSMOS_TRAIN_ROOT}/models/Cosmos-Predict2.5-2B/tokenizer.pth"
 REASON1="${COSMOS_TRAIN_ROOT}/models/Cosmos-Reason1-7B"
@@ -74,17 +77,9 @@ for path in "${EXPERT_ROOT}/${TASK}/data" "${CKPT}" "${TOKENIZER}" "${REASON1}";
     fi
 done
 
-TORCHRUN=""
-for candidate in \
-    "${COSMOS_VENV}/bin/torchrun" \
-    "$(which torchrun 2>/dev/null)"; do
-    if [ -n "${candidate}" ] && [ -f "${candidate}" ]; then
-        TORCHRUN="${candidate}"
-        break
-    fi
-done
-if [ -z "${TORCHRUN}" ]; then
-    echo "[ERROR] torchrun not found. Activate the cosmos venv first."
+TORCHRUN="${COSMOS_VENV}/bin/torchrun"
+if [ ! -x "${TORCHRUN}" ]; then
+    echo "[ERROR] torchrun not found at ${TORCHRUN}. Create ${COSMOS_VENV} with uv or set COSMOS_VENV explicitly."
     exit 1
 fi
 
@@ -103,6 +98,7 @@ echo "[INFO] Epoch size/windows: ${AFB_S1_EPOCH_SIZE}"
 echo "[INFO] Epoch checkpoint step: ${AFB_S1_EPOCH_STEP}"
 echo "[INFO] Final checkpoint step: ${COSMOS_FINAL_CKPT_STEP}"
 echo "[INFO] H5PY extra path: ${H5PY_EXTRA_PATH}"
+echo "[INFO] AFB data root: ${AFB_DATA_ROOT}"
 echo "[INFO] WandB mode: ${WANDB_MODE}"
 echo "[INFO] Skip preflight: ${AFB_S1_SKIP_PREFLIGHT}"
 echo "[INFO] Dryrun: ${AFB_S1_DRYRUN}"
@@ -177,6 +173,8 @@ assert cfg.checkpoint.save_iter == int(os.environ["AFB_S1_EPOCH_STEP"])
 assert cfg.model.config.state_t == 5
 assert cfg.model.config.net.action_dim == 14
 assert cfg.model.config.net.num_action_per_chunk == 16
+assert cfg.model.config.ee_head.enabled is False
+assert cfg.model.config.net.ee_head_enabled is False
 assert cfg.model.config.net.use_crossattn_projection is True
 assert cfg.model.config.net.crossattn_proj_in_channels == 100352
 assert cfg.model.config.net.crossattn_emb_channels == 1024
@@ -194,6 +192,12 @@ if tuple(item["video"].shape) != (3, 17, 256, 320):
     raise RuntimeError(f"Unexpected video shape: {tuple(item['video'].shape)}")
 if tuple(item["action"].shape) != (16, 14):
     raise RuntimeError(f"Unexpected action shape: {tuple(item['action'].shape)}")
+if tuple(item["ee_target_position"].shape) != (16, 2, 3):
+    raise RuntimeError(f"Unexpected EE target position shape: {tuple(item['ee_target_position'].shape)}")
+if tuple(item["ee_target_rotation_6d"].shape) != (16, 2, 6):
+    raise RuntimeError(f"Unexpected EE target rotation shape: {tuple(item['ee_target_rotation_6d'].shape)}")
+if tuple(item["ee_target_gripper"].shape) != (16, 2):
+    raise RuntimeError(f"Unexpected EE target gripper shape: {tuple(item['ee_target_gripper'].shape)}")
 print(f"[INFO] Preflight dataset OK: task={task}, windows={len(ds.samples)}")
 PY
 fi

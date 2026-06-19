@@ -1,4 +1,5 @@
 #!/bin/bash
 set -euo pipefail
 export AFB_S1_TASK=open_laptop
-exec bash /mnt/public_ckp/cscsx_projects/cosmospredict2.5_train/scripts/run_expert_single_task_8gpu.sh
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+exec bash "${SCRIPT_DIR}/run_expert_single_task_8gpu.sh"

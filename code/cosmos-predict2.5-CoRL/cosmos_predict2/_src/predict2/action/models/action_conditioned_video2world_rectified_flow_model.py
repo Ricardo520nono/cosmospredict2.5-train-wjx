@@ -18,6 +18,7 @@ from typing import Callable, Dict, Optional, Tuple
 
 import attrs
 import torch
+import torch.nn.functional as F
 import tqdm
 from megatron.core import parallel_state
 from torch import Tensor
@@ -54,6 +55,7 @@ class Video2WorldModelRectifiedFlowConfig(Text2WorldModelRectifiedFlowConfig):
     conditioning_strategy: str = str(ConditioningStrategy.FRAME_REPLACE)  # What strategy to use for conditioning
     denoise_replace_gt_frames: bool = True  # Whether to denoise the ground truth frames
     conditional_frames_probs: Optional[Dict[int, float]] = None  # Probability distribution for conditional frames
+    ee_head: Optional[Dict] = None
 
     def __attrs_post_init__(self):
         super().__attrs_post_init__()
@@ -63,6 +65,34 @@ class Video2WorldModelRectifiedFlowConfig(Text2WorldModelRectifiedFlowConfig):
 
 
 class ActionVideo2WorldModelRectifiedFlow(Text2WorldModelRectifiedFlow):
+    def _ee_head_enabled(self) -> bool:
+        return self.config.ee_head is not None and self.config.ee_head["enabled"]
+
+    def _ee_loss(self, ee_pred: Dict[str, torch.Tensor], data_batch: Dict) -> tuple[torch.Tensor, Dict[str, torch.Tensor]]:
+        target_position = data_batch["ee_target_position"].to(device=ee_pred["position"].device, dtype=torch.float32)
+        target_rotation_6d = data_batch["ee_target_rotation_6d"].to(
+            device=ee_pred["rotation_6d"].device, dtype=torch.float32
+        )
+        target_gripper = data_batch["ee_target_gripper"].to(device=ee_pred["gripper_logits"].device, dtype=torch.float32)
+
+        position_loss = F.mse_loss(ee_pred["position"].float(), target_position)
+        rotation_6d_loss = F.mse_loss(ee_pred["rotation_6d"].float(), target_rotation_6d)
+        gripper_loss = F.binary_cross_entropy_with_logits(ee_pred["gripper_logits"].float(), target_gripper)
+        raw_loss = (
+            self.config.ee_head["position_loss_weight"] * position_loss
+            + self.config.ee_head["rotation_6d_loss_weight"] * rotation_6d_loss
+            + self.config.ee_head["gripper_loss_weight"] * gripper_loss
+        )
+        loss = self.config.ee_head["loss_weight"] * raw_loss
+        metrics = {
+            "ee_position_loss": position_loss.detach(),
+            "ee_rotation_6d_loss": rotation_6d_loss.detach(),
+            "ee_gripper_loss": gripper_loss.detach(),
+            "ee_loss_raw": raw_loss.detach(),
+            "ee_loss": loss.detach(),
+        }
+        return loss, metrics
+
     def get_data_and_condition(
         self, data_batch: dict[str, torch.Tensor]
     ) -> Tuple[Tensor, Tensor, Video2WorldCondition]:
@@ -204,11 +234,18 @@ class ActionVideo2WorldModelRectifiedFlow(Text2WorldModelRectifiedFlow):
             )
 
         # forward pass through the network
-        net_output_B_C_T_H_W = self.net(
+        net_output = self.net(
             x_B_C_T_H_W=xt_B_C_T_H_W.to(**self.tensor_kwargs),  # Eq. 7 of https://arxiv.org/pdf/2206.00364.pdf
             timesteps_B_T=timesteps_B_T,  # Eq. 7 of https://arxiv.org/pdf/2206.00364.pdf
+            return_ee_pred=self._ee_head_enabled(),
             **condition.to_dict(),
-        ).float()
+        )
+        ee_pred = None
+        if self._ee_head_enabled():
+            net_output_B_C_T_H_W, ee_pred = net_output
+        else:
+            net_output_B_C_T_H_W = net_output
+        net_output_B_C_T_H_W = net_output_B_C_T_H_W.float()
 
         if condition.is_video and self.config.denoise_replace_gt_frames:
             gt_frames_x0 = condition.gt_frames.type_as(net_output_B_C_T_H_W)
@@ -217,7 +254,24 @@ class ActionVideo2WorldModelRectifiedFlow(Text2WorldModelRectifiedFlow):
                 1 - condition_video_mask
             )
 
+        if self._ee_head_enabled():
+            self._last_ee_pred = ee_pred
         return net_output_B_C_T_H_W
+
+    def forward(self, data_batch: dict[str, torch.Tensor]) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+        self._last_ee_pred = None
+        output_batch, loss = super().forward(data_batch)
+        if self._ee_head_enabled():
+            ee_pred = getattr(self, "_last_ee_pred", None)
+            if ee_pred is None:
+                raise RuntimeError("EE head is enabled, but denoise did not produce EE prediction.")
+            ee_loss, ee_metrics = self._ee_loss(ee_pred, data_batch)
+            output_batch["ee_pred"] = ee_pred
+            output_batch.update(ee_metrics)
+            output_batch["loss_without_ee"] = loss.detach()
+            loss = loss + ee_loss
+            output_batch["total_loss"] = loss.detach()
+        return output_batch, loss
 
     def get_velocity_fn_from_batch(
         self,

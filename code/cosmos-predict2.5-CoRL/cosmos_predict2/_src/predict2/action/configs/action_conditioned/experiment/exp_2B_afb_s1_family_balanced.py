@@ -21,14 +21,24 @@ from cosmos_predict2._src.imaginaire.lazy_config import LazyDict
 from cosmos_predict2._src.imaginaire.utils.embedding_concat_strategy import EmbeddingConcatStrategy
 from cosmos_predict2._src.predict2.action.datasets.dataset_afb_s1_family_balanced import AFBS1FamilyBalancedDataset
 
-_EXPERT_ROOT = "/mnt/public_ckp/cscsx_projects/data/ActionFollowingBench/data_delta_ee/demo_clean_zed2i_visible"
+_DATA_ROOT = os.environ.get(
+    "AFB_DATA_ROOT", "/mnt/dataset/public_data/cscsx_projects/data/ActionFollowingBench"
+)
+_EXPERT_ROOT = os.environ.get("AFB_EXPERT_ROOT", os.path.join(_DATA_ROOT, "data_delta_ee/demo_clean_zed2i_visible"))
 _ENHANCED_LEROBOT_ROOT = (
-    "/mnt/public_ckp/cscsx_projects/data/ActionFollowingBench/data_lerobot/robotwin_delta_ee/"
-    "_enhanced_reconvert_wjx5_20260607"
+    os.environ.get(
+        "AFB_ENHANCED_LEROBOT_ROOT",
+        os.path.join(_DATA_ROOT, "data_lerobot/robotwin_delta_ee/_enhanced_reconvert_wjx5_20260607"),
+    )
 )
 _RF_ROOT = (
-    "/mnt/public_ckp/cscsx_projects/data/ActionFollowingBench/EnhancedData/"
-    "random_feasible_300step_5task_2ep5start_formal_v1/random_feasible_random_walk"
+    os.environ.get(
+        "AFB_RF_ROOT",
+        os.path.join(
+            _DATA_ROOT,
+            "EnhancedData/random_feasible_300step_5task_2ep5start_formal_v1/random_feasible_random_walk",
+        ),
+    )
 )
 
 _CHUNK = 16
@@ -72,7 +82,7 @@ afb_s1_val_dataloader = L(DataLoader)(
     drop_last=True,
 )
 
-_TRAIN_ROOT = os.environ.get("COSMOS_TRAIN_ROOT", "/mnt/public_ckp/cscsx_projects/cosmospredict2.5_train")
+_TRAIN_ROOT = os.environ["COSMOS_TRAIN_ROOT"]
 _MODEL_ROOT = os.path.join(_TRAIN_ROOT, "models")
 _PREDICT2_MODEL_ROOT = os.path.join(_MODEL_ROOT, "Cosmos-Predict2.5-2B")
 _LOCAL_CKPT = os.path.join(
@@ -125,10 +135,22 @@ COSMOS_PREDICT2P5_2B_AFB_S1_FAMILY_BALANCED_CHUNK16 = LazyDict(
         model=dict(
             config=dict(
                 state_t=1 + _CHUNK // 4,
+                ee_head=dict(
+                    enabled=True,
+                    loss_weight=float(os.environ.get("AFB_S1_EE_LOSS_WEIGHT", "0.05")),
+                    position_loss_weight=1.0,
+                    rotation_6d_loss_weight=1.0,
+                    gripper_loss_weight=1.0,
+                ),
                 net=dict(
                     action_dim=14,
                     num_action_per_chunk=_CHUNK,
                     temporal_compression_ratio=4,
+                    ee_head_enabled=True,
+                    ee_head_num_frames=_CHUNK,
+                    ee_head_latent_frames=1 + _CHUNK // 4,
+                    ee_head_hidden_dim=int(os.environ.get("AFB_S1_EE_HEAD_HIDDEN_DIM", "1024")),
+                    ee_head_dropout=0.0,
                     use_crossattn_projection=True,
                     crossattn_proj_in_channels=100352,
                     crossattn_emb_channels=1024,

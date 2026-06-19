@@ -20,6 +20,7 @@ from torch.utils.data import Dataset
 from torchvision import transforms as T
 
 from cosmos_predict2._src.imaginaire.utils.dataset_utils import Resize_Preprocess, ToTensorVideo
+from cosmos_predict2._src.predict2.action.datasets.dataset_utils import euler2rotm
 
 
 def _import_h5py():
@@ -32,7 +33,6 @@ def _import_h5py():
             p
             for p in [
                 os.environ.get("H5PY_EXTRA_PATH"),
-                "/mnt/gyc/envs/cosmos-policy/lib/python3.10/site-packages",
                 "/usr/local/lib/python3.10/dist-packages",
                 "/usr/lib/python3/dist-packages",
             ]
@@ -49,11 +49,46 @@ def _import_h5py():
                 continue
         raise ModuleNotFoundError(
             "h5py is required to read expert HDF5 files. Set H5PY_EXTRA_PATH to a Python 3.10 site-packages "
-            "directory containing h5py, for example /mnt/gyc/envs/cosmos-policy/lib/python3.10/site-packages."
+            "directory containing h5py."
         )
 
 
 h5py = _import_h5py()
+
+
+def _rotm_to_6d(rotm):
+    return np.asarray(rotm[:2, :], dtype=np.float32).reshape(6)
+
+
+def _ee_target_from_state_vector(state):
+    state = np.asarray(state, dtype=np.float32)
+    left_pose = state[:, 0:6]
+    left_gripper = state[:, 6]
+    right_pose = state[:, 7:13]
+    right_gripper = state[:, 13]
+    position = np.stack([left_pose[:, 0:3], right_pose[:, 0:3]], axis=1).astype(np.float32)
+    rotation_6d = np.stack(
+        [
+            np.stack([_rotm_to_6d(euler2rotm(rot)) for rot in left_pose[:, 3:6]], axis=0),
+            np.stack([_rotm_to_6d(euler2rotm(rot)) for rot in right_pose[:, 3:6]], axis=0),
+        ],
+        axis=1,
+    ).astype(np.float32)
+    gripper = np.stack([left_gripper, right_gripper], axis=1).astype(np.float32)
+    return position, rotation_6d, gripper
+
+
+def _ee_target_from_h5(f, start, length):
+    frame_slice = slice(start + 1, start + length + 1)
+    state = np.asarray(f["delta_ee_state/vector"][frame_slice], dtype=np.float32)
+    return _ee_target_from_state_vector(state)
+
+
+def _h5_future_window_length(f):
+    action_len = int(f["delta_ee_action/vector"].shape[0])
+    state_len = int(f["delta_ee_state/vector"].shape[0])
+    frame_len = int(f["observation/head_camera/rgb"].shape[0])
+    return min(action_len, state_len - 1, frame_len - 1)
 
 
 class AFBS1FamilyBalancedDataset(Dataset):
@@ -164,7 +199,7 @@ class AFBS1FamilyBalancedDataset(Dataset):
                 if not h5_path.exists():
                     continue
                 with h5py.File(h5_path, "r") as f:
-                    length = int(f["delta_ee_action/vector"].shape[0])
+                    length = _h5_future_window_length(f)
                 if length >= self.num_action_per_chunk:
                     pool[task].append({"family": "expert", "task": task, "h5_path": h5_path, "length": length})
         return pool
@@ -181,7 +216,7 @@ class AFBS1FamilyBalancedDataset(Dataset):
             eps = pd.concat([pd.read_parquet(f) for f in ep_files], ignore_index=True)
             eps = eps[(eps["episode_index"].astype(int) // 100).isin(split_ids)]
             for row in eps.to_dict("records"):
-                length = int(row["length"])
+                length = int(row["length"]) - 1
                 if length >= self.num_action_per_chunk:
                     pool[task].append(
                         {
@@ -251,7 +286,8 @@ class AFBS1FamilyBalancedDataset(Dataset):
             for i in frame_ids:
                 frames.append(imageio.imread(io.BytesIO(bytes(rgb[i]))))
             actions = f["delta_ee_action/vector"][start : start + self.num_action_per_chunk]
-        return np.stack(frames), np.asarray(actions, dtype=np.float32)
+            ee_target = _ee_target_from_h5(f, start, self.num_action_per_chunk)
+        return np.stack(frames), np.asarray(actions, dtype=np.float32), ee_target
 
     def _video_reader(self, path):
         path = str(path)
@@ -298,7 +334,7 @@ class AFBS1FamilyBalancedDataset(Dataset):
         data = self._lerobot_data_cache.get(key)
         if data is None:
             parquet = task_root / "data" / "chunk-000" / "file-000.parquet"
-            data = pd.read_parquet(parquet, columns=["action"])
+            data = pd.read_parquet(parquet, columns=["observation.state", "action"])
             self._lerobot_data_cache[key] = data
         return data
 
@@ -309,6 +345,10 @@ class AFBS1FamilyBalancedDataset(Dataset):
         actions = np.stack(data.iloc[row_start : row_start + self.num_action_per_chunk]["action"].to_numpy()).astype(
             np.float32
         )
+        states = np.stack(
+            data.iloc[row_start + 1 : row_start + self.num_action_per_chunk + 1]["observation.state"].to_numpy()
+        ).astype(np.float32)
+        ee_target = _ee_target_from_state_vector(states)
         file_index = sample["video_file_index"]
         video_path = (
             sample["task_root"]
@@ -319,7 +359,7 @@ class AFBS1FamilyBalancedDataset(Dataset):
         )
         first_frame = int(round(sample["video_from_timestamp"] * 30.0)) + start
         frames = self._read_video_frames_av1(video_path, first_frame)
-        return frames, actions
+        return frames, actions, ee_target
 
     def _read_rf(self, sample):
         sample_dir = sample["sample_dir"]
@@ -328,7 +368,9 @@ class AFBS1FamilyBalancedDataset(Dataset):
             np.float32
         )
         frames = self._read_video_frames(sample_dir / "video.mp4", range(start, start + self.sequence_length))
-        return frames, actions
+        with h5py.File(sample_dir / "data.hdf5", "r") as f:
+            ee_target = _ee_target_from_h5(f, start, self.num_action_per_chunk)
+        return frames, actions, ee_target
 
     def _read_sample(self, sample):
         family = sample["chosen_family"]
@@ -343,15 +385,19 @@ class AFBS1FamilyBalancedDataset(Dataset):
     def __getitem__(self, index):
         try:
             sample = self._choose_sample(index)
-            frames, actions = self._read_sample(sample)
+            frames, actions, ee_target = self._read_sample(sample)
             frames = torch.from_numpy(frames.astype(np.uint8)).permute(0, 3, 1, 2)
             frames = self.not_norm_preprocess(frames)
             frames = torch.clamp(frames * 255.0, 0, 255).to(torch.uint8)
             actions = torch.from_numpy(actions * self.c_act_scaler).float()
+            ee_position, ee_rotation_6d, ee_gripper = ee_target
 
             data = {
                 "video": frames.permute(1, 0, 2, 3),
                 "action": actions,
+                "ee_target_position": torch.from_numpy(ee_position).float(),
+                "ee_target_rotation_6d": torch.from_numpy(ee_rotation_6d).float(),
+                "ee_target_gripper": torch.from_numpy(ee_gripper).float(),
                 "annotation_file": str(sample.get("h5_path") or sample.get("sample_dir") or sample.get("task_root")),
                 "__key__": f"{sample['chosen_family']}/{sample['task']}/{sample.get('episode_index', '')}/{sample['start']}",
                 "fps": 4,
@@ -442,7 +488,7 @@ class AFBS1ExpertSingleTaskDataset(Dataset):
             if not h5_path.exists():
                 continue
             with h5py.File(h5_path, "r") as f:
-                length = int(f["delta_ee_action/vector"].shape[0])
+                length = _h5_future_window_length(f)
             max_start = length - self.num_action_per_chunk
             if max_start < 0:
                 continue
@@ -458,21 +504,26 @@ class AFBS1ExpertSingleTaskDataset(Dataset):
             for i in frame_ids:
                 frames.append(imageio.imread(io.BytesIO(bytes(rgb[i]))))
             actions = f["delta_ee_action/vector"][start : start + self.num_action_per_chunk]
-        return np.stack(frames), np.asarray(actions, dtype=np.float32)
+            ee_target = _ee_target_from_h5(f, start, self.num_action_per_chunk)
+        return np.stack(frames), np.asarray(actions, dtype=np.float32), ee_target
 
     def __getitem__(self, index):
         try:
             rng = random.Random(self.seed + int(index) * 1000003 + random.randint(0, 2**31 - 1))
             sample = self.samples[rng.randrange(len(self.samples))] if self.mode == "train" else self.samples[index % len(self.samples)]
-            frames, actions = self._read_expert_frames(sample["h5_path"], sample["start"])
+            frames, actions, ee_target = self._read_expert_frames(sample["h5_path"], sample["start"])
             frames = torch.from_numpy(frames.astype(np.uint8)).permute(0, 3, 1, 2)
             frames = self.not_norm_preprocess(frames)
             frames = torch.clamp(frames * 255.0, 0, 255).to(torch.uint8)
             actions = torch.from_numpy(actions * self.c_act_scaler).float()
+            ee_position, ee_rotation_6d, ee_gripper = ee_target
 
             data = {
                 "video": frames.permute(1, 0, 2, 3),
                 "action": actions,
+                "ee_target_position": torch.from_numpy(ee_position).float(),
+                "ee_target_rotation_6d": torch.from_numpy(ee_rotation_6d).float(),
+                "ee_target_gripper": torch.from_numpy(ee_gripper).float(),
                 "annotation_file": str(sample["h5_path"]),
                 "__key__": f"expert/{self.task}/{sample['episode']}/{sample['start']}",
                 "fps": 4,
