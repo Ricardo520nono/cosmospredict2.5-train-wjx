@@ -14,6 +14,7 @@ cd "${REPO}"
 COSMOS_VENV="${COSMOS_VENV:-${COSMOS_TRAIN_ROOT}/.venv}"
 VENV_CUDNN="${COSMOS_VENV}/lib/python3.10/site-packages/nvidia/cudnn/lib"
 export LD_LIBRARY_PATH="${VENV_CUDNN}:/usr/local/cuda-12.2/lib64:/usr/local/lib:/usr/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH:-}"
+export PATH="${COSMOS_VENV}/bin:${PATH}"
 export PYTHONPATH=".:packages/cosmos-cuda"
 export H5PY_EXTRA_PATH="${H5PY_EXTRA_PATH:-}"
 export WANDB_MODE="${WANDB_MODE:-online}"
@@ -52,6 +53,11 @@ for path in "${EXPERT_ROOT}" "${ENHANCED_ROOT}" "${RF_ROOT}" "${CKPT}" "${TOKENI
     fi
 done
 
+LOCAL_QWEN_PROCESSOR_ROOT="/mnt/public_ckp/shijy/models"
+LOCAL_QWEN_PROCESSOR="${LOCAL_QWEN_PROCESSOR_ROOT}/Qwen2.5-VL-7B-Instruct"
+mkdir -p "${LOCAL_QWEN_PROCESSOR_ROOT}"
+ln -sfn "${REASON1}" "${LOCAL_QWEN_PROCESSOR}"
+
 TORCHRUN="${COSMOS_VENV}/bin/torchrun"
 if [ ! -x "${TORCHRUN}" ]; then
     echo "[ERROR] torchrun not found at ${TORCHRUN}. Create ${COSMOS_VENV} with uv or set COSMOS_VENV explicitly."
@@ -76,6 +82,7 @@ echo "[INFO] Save model only: ${COSMOS_SAVE_MODEL_ONLY}"
 echo "[INFO] AFB data root: ${AFB_DATA_ROOT}"
 echo "[INFO] EE loss weight: ${AFB_S1_EE_LOSS_WEIGHT}"
 echo "[INFO] EE head hidden dim: ${AFB_S1_EE_HEAD_HIDDEN_DIM}"
+echo "[INFO] Qwen processor cache: ${LOCAL_QWEN_PROCESSOR}"
 echo "[INFO] WandB mode: ${WANDB_MODE}"
 echo "[INFO] Skip preflight: ${AFB_S1_SKIP_PREFLIGHT}"
 echo "[INFO] Dryrun: ${AFB_S1_DRYRUN}"
