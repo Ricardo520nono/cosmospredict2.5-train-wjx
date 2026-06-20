@@ -90,7 +90,7 @@ _LOCAL_CKPT = os.path.join(
     "robot/action-cond/38c6c645-7d41-4560-8eeb-6f4ddc0e6574_ema_bf16.pt",
 )
 _TOKENIZER = os.path.join(_PREDICT2_MODEL_ROOT, "tokenizer.pth")
-_REASON1_CKPT = os.path.join(_MODEL_ROOT, "Cosmos-Reason1-7B")
+_REASON1_CKPT = os.environ.get("COSMOS_REASON1_CKPT", os.path.join(_MODEL_ROOT, "Cosmos-Reason1-7B"))
 
 COSMOS_PREDICT2P5_2B_AFB_S1_FAMILY_BALANCED_CHUNK16 = LazyDict(
     dict(

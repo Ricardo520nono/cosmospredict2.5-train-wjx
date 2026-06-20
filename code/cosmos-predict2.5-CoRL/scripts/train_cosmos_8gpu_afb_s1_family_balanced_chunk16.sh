@@ -45,18 +45,17 @@ RF_ROOT="${AFB_RF_ROOT:-${AFB_DATA_ROOT}/EnhancedData/random_feasible_300step_5t
 CKPT="${COSMOS_TRAIN_ROOT}/models/Cosmos-Predict2.5-2B/robot/action-cond/38c6c645-7d41-4560-8eeb-6f4ddc0e6574_ema_bf16.pt"
 TOKENIZER="${COSMOS_TRAIN_ROOT}/models/Cosmos-Predict2.5-2B/tokenizer.pth"
 REASON1="${COSMOS_TRAIN_ROOT}/models/Cosmos-Reason1-7B"
+QWEN_PROCESSOR_PATH="${COSMOS_QWEN_PROCESSOR_PATH:-${REASON1}}"
 
-for path in "${EXPERT_ROOT}" "${ENHANCED_ROOT}" "${RF_ROOT}" "${CKPT}" "${TOKENIZER}" "${REASON1}"; do
+for path in "${EXPERT_ROOT}" "${ENHANCED_ROOT}" "${RF_ROOT}" "${CKPT}" "${TOKENIZER}" "${REASON1}" "${QWEN_PROCESSOR_PATH}"; do
     if [ ! -e "${path}" ]; then
         echo "[ERROR] Required path not found: ${path}"
         exit 1
     fi
 done
 
-LOCAL_QWEN_PROCESSOR_ROOT="/mnt/public_ckp/shijy/models"
-LOCAL_QWEN_PROCESSOR="${LOCAL_QWEN_PROCESSOR_ROOT}/Qwen2.5-VL-7B-Instruct"
-mkdir -p "${LOCAL_QWEN_PROCESSOR_ROOT}"
-ln -sfn "${REASON1}" "${LOCAL_QWEN_PROCESSOR}"
+export COSMOS_REASON1_CKPT="${REASON1}"
+export COSMOS_QWEN_PROCESSOR_PATH="${QWEN_PROCESSOR_PATH}"
 
 TORCHRUN="${COSMOS_VENV}/bin/torchrun"
 if [ ! -x "${TORCHRUN}" ]; then
@@ -82,7 +81,8 @@ echo "[INFO] Save model only: ${COSMOS_SAVE_MODEL_ONLY}"
 echo "[INFO] AFB data root: ${AFB_DATA_ROOT}"
 echo "[INFO] EE loss weight: ${AFB_S1_EE_LOSS_WEIGHT}"
 echo "[INFO] EE head hidden dim: ${AFB_S1_EE_HEAD_HIDDEN_DIM}"
-echo "[INFO] Qwen processor cache: ${LOCAL_QWEN_PROCESSOR}"
+echo "[INFO] Reason1 checkpoint: ${COSMOS_REASON1_CKPT}"
+echo "[INFO] Qwen processor cache: ${COSMOS_QWEN_PROCESSOR_PATH}"
 echo "[INFO] WandB mode: ${WANDB_MODE}"
 echo "[INFO] Skip preflight: ${AFB_S1_SKIP_PREFLIGHT}"
 echo "[INFO] Dryrun: ${AFB_S1_DRYRUN}"

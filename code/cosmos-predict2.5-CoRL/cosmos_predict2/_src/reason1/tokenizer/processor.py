@@ -17,6 +17,7 @@ from typing import Optional
 
 import numpy as np
 import torch
+import os
 
 try:
     from qwen_vl_utils import extract_vision_info, process_vision_info
@@ -66,9 +67,10 @@ class Processor:
         else:
             self.is_vision_tokenizer = True
 
-        _LOCAL_QWEN_PROCESSOR = "/mnt/public_ckp/shijy/models/Qwen2.5-VL-7B-Instruct"
-        import os as _os
-        if cache_dir is None and _os.path.isdir(_LOCAL_QWEN_PROCESSOR):
+        _LOCAL_QWEN_PROCESSOR = os.environ.get(
+            "COSMOS_QWEN_PROCESSOR_PATH", "/mnt/public_ckp/shijy/models/Qwen2.5-VL-7B-Instruct"
+        )
+        if cache_dir is None and os.path.isdir(_LOCAL_QWEN_PROCESSOR):
             cache_dir = _LOCAL_QWEN_PROCESSOR
         else:
             s3_uri = f"s3://bucket/cosmos_reasoning1/pretrained/Qwen_tokenizer/{name}/"
